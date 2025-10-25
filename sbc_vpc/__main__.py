@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import TYPE_CHECKING
 
 from .config import SerialConnectionConfig
-from .modbus import DeltaRequestLogger, ModbusSlave
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
+    from .modbus import DeltaRequestLogger, ModbusSlave
+
+try:  # pragma: no cover - serial might be optional during tests
+    from serial import SerialException  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback when pyserial absent at runtime
+    SerialException = OSError  # type: ignore[assignment]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -59,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     if not (1 <= args.unit_id <= 247):
         parser.error("--unit-id must be in 1..247")
 
+    if not (1 <= args.data_points <= 5000):
+        parser.error("--data-points must be in 1..5000")
+
     configure_logging(args.log_level)
 
     config = SerialConnectionConfig(
@@ -69,6 +80,14 @@ def main(argv: list[str] | None = None) -> int:
         stopbits=args.stopbits,
         timeout=args.timeout,
     )
+
+    try:
+        from .modbus import DeltaRequestLogger, ModbusSlave
+    except ImportError as exc:  # pragma: no cover - optional dependency missing
+        logging.getLogger(__name__).error(
+            "Failed to import Modbus helpers (is pymodbus installed?): %s", exc
+        )
+        return 1
 
     request_logger = DeltaRequestLogger()
     slave = ModbusSlave(
@@ -82,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - manual interruption
         logging.getLogger(__name__).info("Interrupted by user")
         return 0
+    except (SerialException, OSError) as exc:  # type: ignore[misc]
+        logging.getLogger(__name__).error(
+            "Failed to open serial port %s: %s", args.port, exc
+        )
+        return 1
     except Exception as exc:  # pragma: no cover - startup/runtime error
         logging.getLogger(__name__).error("Failed to run Modbus slave: %s", exc)
         return 1

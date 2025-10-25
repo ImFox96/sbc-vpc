@@ -6,14 +6,45 @@ import logging
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from pymodbus.datastore import (
-    ModbusSequentialDataBlock,
-    ModbusServerContext,
-    ModbusSlaveContext,
-)
-from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.server import StartSerialServer
-from pymodbus.transaction import ModbusRtuFramer
+try:
+    from pymodbus.datastore import (
+        ModbusSequentialDataBlock,
+        ModbusServerContext,
+        ModbusSlaveContext,
+    )
+except Exception:  # pragma: no cover - version-specific import layout
+    from pymodbus.datastore import ModbusSequentialDataBlock, ModbusServerContext  # type: ignore[attr-defined]
+    try:  # pragma: no cover - pymodbus>=3.6
+        from pymodbus.datastore import ModbusDeviceContext as ModbusSlaveContext  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - legacy
+        from pymodbus.datastore.context import (  # type: ignore[attr-defined]
+            ModbusServerContext as _ServerContext,
+        )
+        from pymodbus.datastore.store import (  # type: ignore[attr-defined]
+            ModbusSequentialDataBlock as _SequentialBlock,
+        )
+        from pymodbus.datastore.context import (  # type: ignore[attr-defined]
+            ModbusDeviceContext as ModbusSlaveContext,
+        )
+
+        ModbusServerContext = _ServerContext
+        ModbusSequentialDataBlock = _SequentialBlock
+
+try:
+    from pymodbus.server import StartSerialServer
+except Exception:  # pragma: no cover - fallback for pymodbus<3
+    from pymodbus.server.sync import StartSerialServer  # type: ignore[attr-defined]
+
+try:
+    from pymodbus.device import ModbusDeviceIdentification
+except Exception:  # pragma: no cover - pymodbus>=3.6 relocated
+    from pymodbus.pdu.device import (  # type: ignore[attr-defined]
+        ModbusDeviceIdentification,
+    )
+try:
+    from pymodbus.transaction import ModbusRtuFramer
+except Exception:  # pragma: no cover - pymodbus>=3.6 renamed
+    from pymodbus.framer.rtu import FramerRTU as ModbusRtuFramer  # type: ignore[attr-defined]
 
 from ..config import SerialConnectionConfig
 

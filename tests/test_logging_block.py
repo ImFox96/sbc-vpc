@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("pymodbus")
+
 from sbc_vpc.modbus.scanner import DeltaRequestLogger, LoggingDataBlock
 
 

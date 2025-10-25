@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sbc_vpc.__main__ import build_arg_parser
+import pytest
+
+from sbc_vpc.__main__ import build_arg_parser, main
 from sbc_vpc.config import SerialConnectionConfig
 
 
@@ -29,3 +31,13 @@ def test_serial_config_as_dict() -> None:
     assert params["parity"] == "E"
     assert params["stopbits"] == 1
     assert params["timeout"] == 2.5
+
+
+def test_main_rejects_out_of_range_data_points() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--data-points", "0"])
+    assert exc_info.value.code == 2
+
+    with pytest.raises(SystemExit) as exc_info_high:
+        main(["--data-points", "6000"])
+    assert exc_info_high.value.code == 2
