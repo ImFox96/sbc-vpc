@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Orange Pi ↔ Delta DVP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", Roboto, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      body {
+        margin: 0;
+        padding: 1.5rem;
+        background: radial-gradient(circle at top, #1e293b, #0f172a 60%);
+        min-height: 100vh;
+        box-sizing: border-box;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 2rem;
+      }
+      .panel {
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.35);
+        backdrop-filter: blur(12px);
+      }
+      .panels {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1rem;
+      }
+      .table-block h2 {
+        margin: 0 0 0.75rem;
+        font-size: 1.2rem;
+      }
+      ul.values {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+        gap: 0.5rem;
+        font-family: "Fira Code", monospace;
+        font-size: 0.9rem;
+      }
+      ul.values li {
+        background: rgba(30, 41, 59, 0.8);
+        border-radius: 12px;
+        padding: 0.6rem 0.5rem;
+        text-align: center;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+      }
+      .meta {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        font-size: 0.95rem;
+      }
+      form label {
+        display: block;
+        font-size: 0.85rem;
+        margin-bottom: 0.25rem;
+      }
+      form input,
+      form select,
+      form button {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        margin-bottom: 0.75rem;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.9);
+        color: inherit;
+        box-sizing: border-box;
+      }
+      form button {
+        cursor: pointer;
+        font-weight: 600;
+        background: linear-gradient(135deg, #38bdf8, #6366f1);
+        border: none;
+        color: #0f172a;
+      }
+      #status {
+        font-size: 0.95rem;
+        color: #94a3b8;
+      }
+      .toast {
+        position: fixed;
+        right: 1.5rem;
+        bottom: 1.5rem;
+        padding: 0.75rem 1.25rem;
+        border-radius: 12px;
+        background: rgba(15, 118, 110, 0.9);
+        color: #f8fafc;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.4);
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      .toast.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="panel">
+      <h1>Orange Pi ↔ Delta DVP</h1>
+      <p id="status">Загрузка...</p>
+      <div class="meta">
+        <div>Unit ID: <span id="unit-id">—</span></div>
+        <div>Размер таблиц: <span id="data-points">—</span></div>
+        <div>Источник: localhost</div>
+      </div>
+    </header>
+
+    <section class="panel">
+      <h2>Запись значений</h2>
+      <form id="write-form">
+        <label for="table">Таблица</label>
+        <select id="table" required></select>
+
+        <label for="address">Адрес (0..N)</label>
+        <input id="address" type="number" min="0" required />
+
+        <label for="values">Значения (через запятую)</label>
+        <input
+          id="values"
+          type="text"
+          placeholder="Например: 1,0,255"
+          required
+        />
+
+        <button type="submit">Записать</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Таблицы Modbus</h2>
+      <div class="panels" id="tables"></div>
+    </section>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const tablesEl = document.getElementById("tables");
+      const unitEl = document.getElementById("unit-id");
+      const pointsEl = document.getElementById("data-points");
+      const formEl = document.getElementById("write-form");
+      const tableSelect = document.getElementById("table");
+      const toastEl = document.getElementById("toast");
+
+      function showToast(message, isError = false) {
+        toastEl.textContent = message;
+        toastEl.style.background = isError
+          ? "rgba(220, 38, 38, 0.92)"
+          : "rgba(15, 118, 110, 0.9)";
+        toastEl.classList.add("visible");
+        setTimeout(() => toastEl.classList.remove("visible"), 2000);
+      }
+
+      async function fetchState() {
+        try {
+          const resp = await fetch("/api/state");
+          if (!resp.ok) {
+            throw new Error("HTTP " + resp.status);
+          }
+          const data = await resp.json();
+          updateState(data);
+          statusEl.textContent = "Связь с Modbus активна";
+        } catch (err) {
+          statusEl.textContent = "Ошибка загрузки: " + err;
+        }
+      }
+
+      function updateState(data) {
+        const { tables, dataPoints, unitId } = data;
+        unitEl.textContent = unitId;
+        pointsEl.textContent = dataPoints;
+        tableSelect.innerHTML = "";
+        tablesEl.innerHTML = "";
+
+        Object.entries(tables).forEach(([name, values]) => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          tableSelect.appendChild(option);
+
+          const panel = document.createElement("div");
+          panel.className = "table-block";
+
+          const title = document.createElement("h2");
+          title.textContent = name;
+          panel.appendChild(title);
+
+          const list = document.createElement("ul");
+          list.className = "values";
+
+          values.slice(0, 64).forEach((value, index) => {
+            const item = document.createElement("li");
+            item.textContent = `${index}: ${value}`;
+            list.appendChild(item);
+          });
+
+          panel.appendChild(list);
+          tablesEl.appendChild(panel);
+        });
+      }
+
+      formEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const table = tableSelect.value;
+        const address = parseInt(document.getElementById("address").value, 10);
+        const valuesRaw = document.getElementById("values").value;
+        const values = valuesRaw
+          .split(",")
+          .map((v) => v.trim())
+          .filter((v) => v !== "")
+          .map((v) => Number(v));
+
+        if (values.some((v) => Number.isNaN(v))) {
+          showToast("Проверьте значения", true);
+          return;
+        }
+
+        try {
+          const resp = await fetch("/api/write", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ table, address, values }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.error || "Ошибка записи");
+          }
+          showToast("Запись выполнена");
+          fetchState();
+        } catch (err) {
+          showToast(err, true);
+        }
+      });
+
+      fetchState();
+      setInterval(fetchState, 3000);
+    </script>
+  </body>
+</html>

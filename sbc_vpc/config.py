@@ -1,4 +1,4 @@
-"""Configuration helpers for the SBC to Delta VPC bridge."""
+"""Configuration helpers for the SBC to Delta DVP bridge."""
 
 from __future__ import annotations
 

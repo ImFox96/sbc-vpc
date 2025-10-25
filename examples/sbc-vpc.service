@@ -1,0 +1,14 @@
+[Unit]
+Description=SBC Modbus RTU slave (Delta DVP logger)
+After=network.target
+
+[Service]
+Type=simple
+# подстройте путь к виртуальному окружению и каталогу
+WorkingDirectory=/opt/sbc-vpc
+ExecStart=/opt/sbc-vpc/.venv/bin/python -m sbc_vpc --port /dev/ttyUSB0 --baudrate 9600 --bytesize 7 --parity E --stopbits 1 --unit-id 1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

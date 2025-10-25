@@ -1,4 +1,4 @@
-"""Core package for SBC to Delta VPC integration."""
+"""Core package for SBC to Delta DVP integration."""
 
 __all__ = ["__version__"]
 
