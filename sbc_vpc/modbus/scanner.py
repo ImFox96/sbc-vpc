@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 try:
@@ -103,6 +103,24 @@ class LoggingDataBlock(ModbusSequentialDataBlock):
         self._request_logger.log_write(self._table, address, data)
         super().setValues(address, data)
 
+    def snapshot(self) -> list[int]:
+        """Return the current values without emitting Modbus logs."""
+
+        # Access to ``values`` is guarded by the parent class lock.
+        return list(self.values)  # type: ignore[attr-defined]
+
+    def write_local(self, address: int, values: Sequence[int] | int) -> None:
+        """Update values initiated from the local host (e.g. web UI)."""
+
+        data = list(values) if isinstance(values, Sequence) else [int(values)]
+        logging.getLogger("sbc_vpc.web").info(
+            "Local write to %s starting at %d: %s",
+            self._table,
+            address,
+            data,
+        )
+        ModbusSequentialDataBlock.setValues(self, address, data)
+
 
 @dataclass(slots=True)
 class ModbusSlave:
@@ -112,23 +130,37 @@ class ModbusSlave:
     request_logger: DeltaRequestLogger
     data_points: int = 128
     unit_id: int = 1
+    _blocks: dict[str, LoggingDataBlock] = field(init=False, repr=False)
+    _context: ModbusServerContext = field(init=False, repr=False)
+    _identity: ModbusDeviceIdentification = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self._blocks = self._build_blocks()
         self._context = self._build_context()
         self._identity = self._build_identity()
 
+    def _build_blocks(self) -> dict[str, LoggingDataBlock]:
+        return {
+            table: LoggingDataBlock(
+                address=0,
+                values=[0] * self.data_points,
+                table=table,
+                request_logger=self.request_logger,
+            )
+            for table in (
+                "discrete_inputs",
+                "coils",
+                "holding_registers",
+                "input_registers",
+            )
+        }
+
     def _build_context(self) -> ModbusServerContext:
-        block = lambda table: LoggingDataBlock(  # noqa: E731
-            address=0,
-            values=[0] * self.data_points,
-            table=table,
-            request_logger=self.request_logger,
-        )
         slave_context = ModbusSlaveContext(
-            di=block("discrete_inputs"),
-            co=block("coils"),
-            hr=block("holding_registers"),
-            ir=block("input_registers"),
+            di=self._blocks["discrete_inputs"],
+            co=self._blocks["coils"],
+            hr=self._blocks["holding_registers"],
+            ir=self._blocks["input_registers"],
         )
         return ModbusServerContext(slaves={self.unit_id: slave_context}, single=False)
 
@@ -152,3 +184,28 @@ class ModbusSlave:
             framer=ModbusRtuFramer,
             **self.config.as_dict(),
         )
+
+    def snapshot(self) -> dict[str, list[int]]:
+        """Return a copy of the current Modbus table values."""
+
+        return {table: block.snapshot() for table, block in self._blocks.items()}
+
+    def write_table(self, table: str, address: int, values: Sequence[int] | int) -> None:
+        """Write values to one of the Modbus tables."""
+
+        if table not in self._blocks:
+            raise ValueError(f"Unknown table '{table}'")
+        if address < 0:
+            raise ValueError("Address must be non-negative")
+        data = list(values) if isinstance(values, Sequence) else [int(values)]
+        if not data:
+            raise ValueError("No values provided")
+        if address + len(data) > self.data_points:
+            raise ValueError("Write exceeds configured data size")
+        self._blocks[table].write_local(address, data)
+
+    @property
+    def tables(self) -> tuple[str, ...]:
+        """Names of the Modbus tables exposed by the slave."""
+
+        return tuple(self._blocks.keys())

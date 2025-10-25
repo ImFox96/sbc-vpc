@@ -30,3 +30,10 @@ def test_logging_data_block_records_reads_and_writes() -> None:
         ("write", "holding_registers", 1, [10, 11]),
         ("read", "holding_registers", 1, 2),
     ]
+
+    block.write_local(0, [5])
+    assert block.snapshot()[0] == 5
+    assert recorder.events == [
+        ("write", "holding_registers", 1, [10, 11]),
+        ("read", "holding_registers", 1, 2),
+    ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from .config import SerialConnectionConfig
@@ -50,6 +51,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
         help="Verbosity of the runtime logger",
     )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8080,
+        help="TCP порт для веб-интерфейса",
+    )
+    parser.add_argument(
+        "--web-bind",
+        default="0.0.0.0",
+        help="Адрес привязки веб-интерфейса",
+    )
+    parser.add_argument(
+        "--no-web",
+        action="store_true",
+        help="Отключить встроенный веб-интерфейс",
+    )
     return parser
 
 
@@ -69,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not (1 <= args.data_points <= 5000):
         parser.error("--data-points must be in 1..5000")
+
+    if not (1 <= args.web_port <= 65535):
+        parser.error("--web-port must be in 1..65535")
 
     configure_logging(args.log_level)
 
@@ -96,6 +116,33 @@ def main(argv: list[str] | None = None) -> int:
         data_points=args.data_points,
         unit_id=args.unit_id,
     )
+
+    web_server = None
+    web_thread: threading.Thread | None = None
+    if not args.no_web:
+        try:
+            from .web import WebUIServer
+        except ImportError as exc:  # pragma: no cover - optional dependency missing
+            logging.getLogger(__name__).error(
+                "Failed to import web interface: %s", exc
+            )
+            return 1
+        try:
+            web_server = WebUIServer(
+                slave=slave,
+                host=args.web_bind,
+                port=args.web_port,
+            )
+        except OSError as exc:
+            logging.getLogger(__name__).error(
+                "Failed to bind web interface on %s:%d: %s",
+                args.web_bind,
+                args.web_port,
+                exc,
+            )
+            return 1
+        web_thread = web_server.start_in_thread()
+
     try:
         slave.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover - manual interruption
@@ -109,6 +156,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # pragma: no cover - startup/runtime error
         logging.getLogger(__name__).error("Failed to run Modbus slave: %s", exc)
         return 1
+    finally:
+        if web_server is not None:
+            web_server.shutdown()
+        if web_thread is not None:
+            web_thread.join(timeout=1)
     return 0
 
 

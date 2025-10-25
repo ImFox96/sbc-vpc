@@ -41,3 +41,9 @@ def test_main_rejects_out_of_range_data_points() -> None:
     with pytest.raises(SystemExit) as exc_info_high:
         main(["--data-points", "6000"])
     assert exc_info_high.value.code == 2
+
+
+def test_main_rejects_invalid_web_port() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--web-port", "70000", "--no-web"])
+    assert exc_info.value.code == 2
