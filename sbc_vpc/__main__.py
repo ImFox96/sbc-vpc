@@ -3,33 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-from typing import Callable
 
 from .config import SerialConnectionConfig
 from .modbus import DeltaRequestLogger, ModbusSlave
-
-
-try:  # pragma: no cover - optional dependency for better error messages
-    from serial import SerialException  # type: ignore
-except Exception:  # pragma: no cover - pyserial not installed during tests
-    SerialException = OSError  # type: ignore[misc, assignment]
-
-
-def _bounded_int(min_value: int, max_value: int) -> Callable[[str], int]:
-    def _convert(value: str) -> int:
-        try:
-            parsed = int(value)
-        except ValueError as exc:  # pragma: no cover - argparse handles messaging
-            raise argparse.ArgumentTypeError(str(exc)) from exc
-        if not min_value <= parsed <= max_value:
-            raise argparse.ArgumentTypeError(
-                f"Value must be between {min_value} and {max_value}"
-            )
-        return parsed
-
-    return _convert
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -52,15 +29,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--data-points",
-        type=_bounded_int(1, 4096),
+        type=int,
         default=128,
         help="Number of registers/coils exposed by the slave",
     )
     parser.add_argument(
-        "--unit-id",
-        type=_bounded_int(1, 247),
-        default=1,
-        help="Modbus unit identifier of the DVP controller",
+        "--unit-id", type=int, default=1, help="Modbus unit/slave id (1..247)"
     )
     parser.add_argument(
         "--log-level",
@@ -68,49 +42,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
         help="Verbosity of the runtime logger",
     )
-    parser.add_argument(
-        "--json-logs",
-        action="store_true",
-        help="Emit logs in JSON format for easier ingestion",
-    )
     return parser
 
 
-class JsonFormatter(logging.Formatter):
-    """Simple JSON formatter to improve log collection."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, object] = {
-            "time": self.formatTime(record, self.datefmt),
-            "level": record.levelname,
-            "name": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False)
-
-
-def configure_logging(level: str, *, json_logs: bool) -> None:
-    logger = logging.getLogger()
-    logger.handlers.clear()
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-
-    handler = logging.StreamHandler()
-    if json_logs:
-        handler.setFormatter(JsonFormatter())
-    else:
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
-    logger.addHandler(handler)
+def configure_logging(level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    configure_logging(args.log_level, json_logs=args.json_logs)
+    if not (1 <= args.unit_id <= 247):
+        parser.error("--unit-id must be in 1..247")
+
+    configure_logging(args.log_level)
 
     config = SerialConnectionConfig(
         port=args.port,
@@ -130,13 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         slave.serve_forever()
-    except (SerialException, OSError) as exc:
-        logging.getLogger(__name__).error(
-            "Failed to open serial port %s: %s", args.port, exc
-        )
-        return 1
     except KeyboardInterrupt:  # pragma: no cover - manual interruption
         logging.getLogger(__name__).info("Interrupted by user")
+        return 0
+    except Exception as exc:  # pragma: no cover - startup/runtime error
+        logging.getLogger(__name__).error("Failed to run Modbus slave: %s", exc)
+        return 1
     return 0
 
 

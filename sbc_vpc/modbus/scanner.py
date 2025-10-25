@@ -68,10 +68,7 @@ class LoggingDataBlock(ModbusSequentialDataBlock):
     def setValues(  # noqa: N802
         self, address: int, values: Sequence[int] | int
     ) -> None:
-        if isinstance(values, Sequence):
-            data = list(values)
-        else:
-            data = [int(values)]
+        data = list(values) if isinstance(values, Sequence) else [int(values)]
         self._request_logger.log_write(self._table, address, data)
         super().setValues(address, data)
 
@@ -86,10 +83,6 @@ class ModbusSlave:
     unit_id: int = 1
 
     def __post_init__(self) -> None:
-        if not 1 <= self.data_points <= 4096:
-            raise ValueError("data_points must be between 1 and 4096")
-        if not 1 <= self.unit_id <= 247:
-            raise ValueError("unit_id must be between 1 and 247")
         self._context = self._build_context()
         self._identity = self._build_identity()
 
@@ -121,11 +114,7 @@ class ModbusSlave:
     def serve_forever(self) -> None:
         """Start the Modbus RTU slave loop."""
 
-        _LOGGER.info(
-            "Starting Modbus slave on %s (unit_id=%s)",
-            self.config.port,
-            self.unit_id,
-        )
+        _LOGGER.info("Starting Modbus slave on %s", self.config.port)
         StartSerialServer(  # pragma: no cover - integration behaviour
             context=self._context,
             identity=self._identity,
